@@ -1,6 +1,12 @@
 # CELESTIAL-1: A Model for Processing, Understanding, and Reasoning in Unlimited Modalities
 
-CELESTIAL-1 is an open source model designed to provide a general representation for processing, understanding, and reasoning across an unlimited range of modalities. The model is based on the ONE-PEACE architecture, enabling it to effectively operate across a range of modalities including vision, audio, and language. Unlike other models that require pretraining on vision or language tasks, CELESTIAL-1 can operate in vision, audio, audio-language, and vision-language tasks without any prior initialization.
+CELESTIAL-1 is an open source model designed to provide a general representation for processing, understanding, and reasoning across an unlimited range of modalities.
+
+CELESTIAL-1 can operate in vision, audio, audio-language, and vision-language tasks without any prior initialization.
+
+This model will change everything. And, we need your help. [Contribute to the project board here:](https://github.com/users/kyegomez/projects/6/views/2)
+
+
 
 ## Features
 
