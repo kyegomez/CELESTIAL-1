@@ -1,23 +1,17 @@
+import random
 from argparse import Namespace
+from collections import OrderedDict
 from typing import Union
 
+import numpy as np
+import torch
+import torchvision.transforms as T
+from decord import VideoReader, cpu
 from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig
-
-import random
-import torch
-from collections import OrderedDict
-
-import numpy as np
 from PIL import Image
-import torchvision.transforms as T
-from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor
 from torchvision import transforms as tvtrans
-
-from decord import VideoReader, cpu, gpu
-
-
-
+from torchvision.transforms import Compose, Resize
 
 REGISTRIES = {}
 
@@ -295,6 +289,7 @@ def atomic_save(cfg, net, opt, step, path):
     if opt is not None:
         checkpoint['optimizer_states'] = opt.state_dict()
     import io
+
     import fsspec
     bytesbuffer = io.BytesIO()
     torch.save(checkpoint, bytesbuffer)
@@ -479,15 +474,13 @@ class color_adjust(object):
     
 
 
-from email.policy import strict
-import torch
-import torchvision.models
-import os.path as osp
 import copy
+
+import torch
+
 # from core.common.logger import print_log 
-from .utils import \
-    get_total_param, get_total_param_sum, \
-    get_unit
+from .utils import get_unit
+
 
 def singleton(class_):
     instances = {}
@@ -529,23 +522,23 @@ class get_model(object):
 
         # the register is in each file
         if t.find('audioldm')==0:
-            from ..latent_diffusion.vae import audioldm
+            pass
         elif t.find('autoencoderkl')==0:
-            from ..latent_diffusion.vae import autokl
+            pass
         elif t.find('optimus')==0:
-            from ..latent_diffusion.vae import optimus
+            pass
             
         elif t.find('clip')==0:
-            from ..encoders import clip
+            pass
         elif t.find('clap')==0:
-            from ..encoders import clap   
+            pass   
             
         elif t.find('sd')==0:
-            from .. import sd
+            pass
         elif t.find('codi')==0:
-            from .. import codi
+            pass
         elif t.find('openai_unet')==0:
-            from ..latent_diffusion import diffusion_unet
+            pass
         
         args = preprocess_model_args(cfg.args)
         net = self.model[t](**args)
@@ -562,10 +555,12 @@ def register(name, version='x'):
     return wrapper
 
 
+import itertools
+
+import numpy as np
 import torch
 import torch.optim as optim
-import numpy as np
-import itertools
+
 
 def singleton(class_):
     instances = {}
@@ -611,12 +606,14 @@ class get_optimizer(object):
         return self.optimizer[t](params, lr=0, **cfg.args)
     
 
+import copy
+
+import numpy as np
 import torch
 import torch.optim as optim
-import numpy as np
-import copy
-from ... import sync
+
 from ...cfg_holder import cfg_unique_holder as cfguh
+
 
 def singleton(class_):
     instances = {}
@@ -811,7 +808,7 @@ class LambdaWarmUpCosineScheduler2(template_scheduler):
                  base_lr,
                  warm_up_steps, 
                  f_min, f_max, f_start, cycle_lengths, verbosity_interval=0):
-        cfgt = cfguh().cfg.train
+        cfguh().cfg.train
         # bs = cfgt.batch_size
         # if 'gradacc_every' not in cfgt:
         #     print('Warning, gradacc_every is not found in xml, use 1 as default.')
