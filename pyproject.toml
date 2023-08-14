@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "celestial"
+version = "0.1.0"
+description = "CELESTIAL-1: A Model for Processing, Understanding, and Reasoning in Unlimited Modalities"
+authors = ["Your Name <your@email.com>"]
+license = "Apache-2.0"
+
+[tool.poetry.dependencies]
+python = "^3.8"
+tqdm = "*"
+six = "*"
+easydict = "*"
+ftfy = "*"
+einops = "*"
+decord = "*"
+transformers = "*"
+pytorch-lightning = "*"
+timm = "*"
+torchlibrosa = "*"
+librosa = "*"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
