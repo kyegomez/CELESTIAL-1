@@ -7,6 +7,31 @@ CELESTIAL-1 can operate in vision, audio, audio-language, and vision-language ta
 This model will change everything for our species, we'll able to automate any digital task. And, we need your help. [Contribute to the project board here:](https://github.com/users/kyegomez/projects/6/views/2)
 
 
+# Usage
+
+### Steps
+
+1. **Clone the Repository**:
+   ```bash
+   git clone https://github.com/kyegomez/Celestial-1.git
+   ```
+
+2. **Navigate to the Directory**:
+   ```bash
+   cd Celestial-1
+   ```
+
+3. **Install Dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **Run Initial Setup** (if available):
+   ```bash
+   python setup.py
+   ```
+
+---
 
 ## Features
 
@@ -19,9 +44,59 @@ CELESTIAL-1 boasts a wide range of features designed to enhance its versatility 
 * **Modality-Agnostic Tasks**: The model can perform tasks that are agnostic to the modality, further widening its range of uses.
 * **Strong Emergent Zero-Shot Retrieval Capability**: CELESTIAL-1 has an impressive ability to retrieve information in a zero-shot manner, an essential feature for any advanced AI model.
 
-## Usage
+---
 
-The development of CELESTIAL-1 is currently ongoing, and checkpoints, training scripts, inference scripts, and demos will be released as they become available. Please stay tuned for future updates!
+## Contribution
+
+Contributing to CELESTIAL-1 is a rewarding experience, whether you're a novice developer or an AI expert. Here's a simple guide to get you started:
+
+1. **Understand the Project**: 
+   Familiarize yourself with CELESTIAL-1's mission and features. Check out the project board: [Contribute to the project board](https://github.com/users/kyegomez/projects/6/views/2).
+
+2. **Choose a Task**:
+   Select a task that resonates with your skill set and passion. It could range from documentation, coding, testing, or even discussions.
+
+3. **Fork the Repository**:
+   Create a personal fork of the CELESTIAL-1 repository on GitHub.
+
+4. **Clone Your Fork**:
+   ```bash
+   git clone https://github.com/<your-username>/Celestial-1.git
+   ```
+
+5. **Branching**:
+   Always create a new branch for each task. This keeps things organized.
+   ```bash
+   git checkout -b feature/your-branch-name
+   ```
+
+6. **Code, Document, Discuss**:
+   Dive in! Make your changes, write/document, or participate in discussions. 
+
+7. **Commit and Push**:
+   After making your changes, commit them and push them to your fork.
+   ```bash
+   git commit -m "Your concise commit message"
+   git push origin feature/your-branch-name
+   ```
+
+8. **Create a Pull Request**:
+   Go to the original CELESTIAL-1 repository on GitHub and create a pull request. Fill out the provided template with as much detail as possible.
+
+9. **Wait for Review**:
+   Maintainers or other contributors will review your changes. They might ask for edits or further information. Collaboration is key!
+
+10. **Celebrate**:
+   Once your contribution is merged, celebrate! You've just made an impactful contribution to an incredible project.
+
+## Tips:
+- Always sync your fork with the main repository before starting on a new feature.
+- Clearly document any changes or additions you make.
+- Participate actively in discussions and respect all contributors.
+
+Remember, every contribution, no matter how small, is valuable. Your insights, skills, and time are greatly appreciated. Let's make CELESTIAL-1 remarkable together!
+
+---
 
 ## References
 
@@ -31,9 +106,7 @@ For more information about the ONE-PEACE architecture that CELESTIAL-1 is based 
 * ONE-PEACE Demo: [Link](#)
 * ONE-PEACE Checkpoints: [Link](#)
 
-## Contributing
-
-We greatly appreciate contributions from the community that will help to make CELESTIAL-1 even more powerful and useful. If you are interested in contributing, please refer to our contribution guidelines for more details on how you can get involved.
+-------
 
 ## License
 
