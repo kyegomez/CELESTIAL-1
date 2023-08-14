@@ -923,9 +923,6 @@ def get_world_size(type='local'):
     else:
         assert False, 'Unknown type'
 
-
-'
-
 class barrier_lock(object):
     def __init__(self, n):
         self.n = n

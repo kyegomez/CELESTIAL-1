@@ -1,11 +1,15 @@
-import os
 import math
+import os
 from inspect import isfunction
+from typing import List
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from einops import rearrange, repeat
 from torch import einsum, nn
+
+from transformers import CLIPTokenizer, CLIPTextModel
 
 
 def exists(val):
@@ -28,6 +32,25 @@ def init_(tensor):
     std = 1 / math.sqrt(dim)
     tensor.uniform_(-std, std)
     return tensor
+
+
+#abstact
+class AbstractEncoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+    
+    def encode(self, *args, **kwargs):
+        raise NotImplementedError
+    
+
+def disabled_train(self, mode=True):
+    return self
+
+class FrozenCLIPTextEmbedder(AbstractEncoder):
+    def __init__(self, 
+                 verison='openai/clip-vit-large-patch14',
+                 device='cuda',
+                 max_length=77):
 
 #feedforward
 class GEGLU(nn.Module):
@@ -338,20 +361,3 @@ class SpatialTransformer(nn.Module):
 
 
 
-
-
-
-
-
-
-
-
-class Celestial(nn.Module):
-    def __init__(self,
-                 dim):
-        pass
-
-    def forward(self, dim):
-        pass
-
-    
