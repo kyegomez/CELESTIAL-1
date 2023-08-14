@@ -26,10 +26,8 @@ This model will change everything for our species, we'll able to automate any di
    pip install -r requirements.txt
    ```
 
-4. **Run Initial Setup** (if available):
-   ```bash
-   python setup.py
-   ```
+4. **Train or Inference**:
+    ```python3 train.py / inference.py```
 
 ---
 
