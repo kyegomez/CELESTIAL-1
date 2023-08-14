@@ -335,3 +335,23 @@ class SpatialTransformer(nn.Module):
         x = rearrange(x, 'b (h w) c -> b c h w', h=h, w=w)
         x = self.proj_out(x)
         return x + x_in
+
+
+
+
+
+
+
+
+
+
+
+class Celestial(nn.Module):
+    def __init__(self,
+                 dim):
+        pass
+
+    def forward(self, dim):
+        pass
+
+    
