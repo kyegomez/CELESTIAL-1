@@ -9,7 +9,7 @@ This model will change everything for our species, we'll able to automate any di
 
 # Usage
 
-```pip install cstx``````
+`pip install cstx`
 
 ### Steps
 
