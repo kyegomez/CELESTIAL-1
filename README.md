@@ -4,7 +4,7 @@ CELESTIAL-1 is an open source model designed to provide a general representation
 
 CELESTIAL-1 can operate in vision, audio, audio-language, and vision-language tasks without any prior initialization.
 
-This model will change everything. And, we need your help. [Contribute to the project board here:](https://github.com/users/kyegomez/projects/6/views/2)
+This model will change everything for our species, we'll able to automate any digital task. And, we need your help. [Contribute to the project board here:](https://github.com/users/kyegomez/projects/6/views/2)
 
 
 
