@@ -1,9 +1,9 @@
 [tool.poetry]
-name = "celestial"
+name = "cstx"
 version = "0.1.0"
-description = "CELESTIAL-1: A Model for Processing, Understanding, and Reasoning in Unlimited Modalities"
-authors = ["Your Name <your@email.com>"]
-license = "Apache-2.0"
+description = "Description of the cstx package"
+authors = ["Kye Gomez <kye@apac.ai>"]
+license = "MIT"
 
 [tool.poetry.dependencies]
 python = "^3.8"
