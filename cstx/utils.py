@@ -9,6 +9,8 @@ import torchvision.transforms as T
 from decord import VideoReader, cpu
 from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig
+
+import PIL
 from PIL import Image
 from torchvision import transforms as tvtrans
 from torchvision.transforms import Compose, Resize
