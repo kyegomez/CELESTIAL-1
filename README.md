@@ -1,4 +1,5 @@
-[Join Agora](https://discord.gg/qUtxnK2NMf) the community of engineers changing the world with their creations.🥳🎉🎊
+[![Multi-Modality](agorabanner.png)](https://discord.gg/qUtxnK2NMf)
+
 
 # CELESTIAL-1: A Model for Processing, Understanding, and Reasoning in Unlimited Modalities
 [![GitHub issues](https://img.shields.io/github/issues/kyegomez/CELESTIAL-1)](https://github.com/kyegomez/CELESTIAL-1/issues) 
