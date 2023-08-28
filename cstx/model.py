@@ -784,7 +784,7 @@ symbol = 'codi'
     
     
 @register('codi', version)
-class CoDi(DDPM):
+class Celestial(DDPM):
     def __init__(self,
                  audioldm_cfg,
                  autokl_cfg,
