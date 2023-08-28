@@ -1,27 +1,19 @@
-import math
-import os
+import copy
 from inspect import isfunction
-from typing import List, Dist
-
-
-import numpy as np
+from typing import List
+import tqdm
 import torch
-import torch.nn.functional as F
-from einops import rearrange, repeat
-from torch import einsum, nn
-from transformers import CLIPTextModel, CLIPTokenizer
-
-import numpy.random as npr
+import torch.nn as nn
+import numpy as np
 from functools import partial
 from contextlib import contextmanager
 
+from research.BindDiffusion.ldm.modules.diffusionmodules.util import noise_like
 
-########
+
+#HELPERS
 def exists(val):
     return val is not None
-
-def uniq(arr):
-    return{el: True for el in arr}.keys()
 
 def default(val, d):
     if exists(val):
@@ -29,105 +21,42 @@ def default(val, d):
     return d() if isfunction(d) else d
 
 
-def max_neg_value(t):
-    return -torch.finfo(t.dtype).max
-
-def init_(tensor):
-    dim = tensor.shape(-1)
-    std = 1 / math.sqrt(dim)
-    tensor.uniform_(-std, std)
-    return tensor
-
-
-#abstact
-class AbstractEncoder(nn.Module):
-    def __init__(self):
-        super().__init__()
-    
-    def encode(self, *args, **kwargs):
-        raise NotImplementedError
-    
-
-
-############ -------------- CLIP
-def disabled_train(self, mode=True):
-    return self
-
-class FrozenCLIPTextEmbedder(AbstractEncoder):
-    def __init__(self, 
-                 verison='openai/clip-vit-large-patch14',
-                 device='cuda',
-                 max_length=77):
-        super().__init__()
-        self.tokenizer = CLIPTokenizer.from_pretrained(verison)
-        self.transformer = CLIPTextModel.from_pretrained(verison)
-        self.device = device
-        self.max_length = max_length
-        self.freeze()
-    
-    def freeze(self):
-        self.transformer.eval()
-        for param in self.parameters():
-            param.requires_grad=False
-
-    def forward(self, text):
-        batch_encoding = self.tokenizer(text,
-                                        truncation=True,
-                                        max_length=self.max_length,
-                                        return_length=True,
-                                        return_overflowing_tokens=False,
-                                        padding="max_length",
-                                        return_tensors="pt")
-        tokens = batch_encoding["input_ids"].to(self.device)
-        outputs = self.transformer(input_ids=tokens)
-        z = outputs.last_hidden_state
-        return z
-    
-    def encode(self, text):
-        return self(text)
-
-
-
 class LitEma(nn.Module):
-    def __init__(
-            self,
-            model,
-            decay=0.9999,
-            use_num_updates=True
-    ):
+    def __init__(self, model, decay=0.9999, use_num_updates=True):
         super().__init__()
-        if decay < 0.0 and decay < 1.0:
+        if decay < 0.0 or decay > 1.0:
             raise ValueError('Decay must be between 0 and 1')
-        
+
         self.m_name2s_name = {}
         self.register_buffer('decay', torch.tensor(decay, dtype=torch.float32))
-        self.register_buffer('num_updates',
-                             torch.tensor(0, dtype=torch.int) if use_num_updates
-                             else torch.tensor(-1, dtype=torch.int))
-        
+        self.register_buffer('num_updates', torch.tensor(0,dtype=torch.int) if use_num_updates
+                             else torch.tensor(-1,dtype=torch.int))
+
         for name, p in model.named_parameters():
             if p.requires_grad:
-                s_name = name.replace('.', '')
+                #remove as '.'-character is not allowed in buffers
+                s_name = name.replace('.','')
                 self.m_name2s_name.update({name:s_name})
                 self.register_buffer(s_name,p.clone().detach().data)
-        
+
         self.collected_params = []
-    
+
     def forward(self, model):
         decay = self.decay
-        if self.num.updates >= 0:
+
+        if self.num_updates >= 0:
             self.num_updates += 1
-            decay = min(self.decay, (1 + self.num_updates) / (10 + self.num_updates))
-        
+            decay = min(self.decay,(1 + self.num_updates) / (10 + self.num_updates))
+
         one_minus_decay = 1.0 - decay
-        
+
         with torch.no_grad():
             m_param = dict(model.named_parameters())
             shadow_params = dict(self.named_buffers())
 
             for key in m_param:
                 if m_param[key].requires_grad:
-                    sname = self.m_nam2s_name[key]
+                    sname = self.m_name2s_name[key]
                     shadow_params[sname] = shadow_params[sname].type_as(m_param[key])
                     shadow_params[sname].sub_(one_minus_decay * (shadow_params[sname] - m_param[key]))
                 else:
@@ -138,65 +67,137 @@ class LitEma(nn.Module):
         shadow_params = dict(self.named_buffers())
         for key in m_param:
             if m_param[key].requires_grad:
-                m_param[key].data.copy_(shadow_params(self.m_name2_name[key]).data)
+                m_param[key].data.copy_(shadow_params[self.m_name2s_name[key]].data)
             else:
                 assert not key in self.m_name2s_name
 
     def store(self, parameters):
+        """
+        Save the current parameters for restoring later.
+        Args:
+          parameters: Iterable of `torch.nn.Parameter`; the parameters to be
+            temporarily stored.
+        """
         self.collected_params = [param.clone() for param in parameters]
-    
-    def restore(self, parameters):
-        for c_params, param in zip(self.collected_params, parameters):
-            param.data.copy_(c_params.data)
 
-########
-def make_beta_schedule(schedule, 
-                       n_timestep, 
-                       linear_start=1e-4,
-                        linear_end=2e-2,
-                         cosine_s=8e-3 ):
+    def restore(self, parameters):
+        """
+        Restore the parameters stored with the `store` method.
+        Useful to validate the model with EMA parameters without affecting the
+        original optimization process. Store the parameters before the
+        `copy_to` method. After validation (or model saving), use this to
+        restore the former parameters.
+        Args:
+          parameters: Iterable of `torch.nn.Parameter`; the parameters to be
+            updated with the stored parameters.
+        """
+        for c_param, param in zip(self.collected_params, parameters):
+            param.data.copy_(c_param.data)
+
+
+def singleton(class_):
+    instances = {}
+    def getinstance(*args, **kwargs):
+        if class_ not in instances:
+            instances[class_] = class_(*args, **kwargs)
+        return instances[class_]
+    return getinstance
+
+def preprocess_model_args(args):
+    # If args has layer_units, get the corresponding
+    #     units.
+    # If args get backbone, get the backbone model.
+    args = copy.deepcopy(args)
+    if 'layer_units' in args:
+        layer_units = [
+            get_unit()(i) for i in args.layer_units
+        ]
+        args.layer_units = layer_units
+    if 'backbone' in args:
+        args.backbone = get_model()(args.backbone)
+    return args
+
+@singleton
+class get_model(object):
+    def __init__(self):
+        self.model = {}
+        self.version = {}
+
+    def register(self, model, name, version='x'):
+        self.model[name] = model
+        self.version[name] = version
+
+    def __call__(self, cfg, verbose=True):
+        """
+        Construct model based on the config. 
+        """
+        t = cfg.type
+
+        # the register is in each file
+        if t.find('audioldm')==0:
+            pass
+        elif t.find('autoencoderkl')==0:
+            pass
+        elif t.find('optimus')==0:
+            pass
+            
+        elif t.find('clip')==0:
+            pass
+        elif t.find('clap')==0:
+            pass   
+            
+        elif t.find('sd')==0:
+            pass
+        elif t.find('codi')==0:
+            pass
+        elif t.find('openai_unet')==0:
+            pass
+        
+        args = preprocess_model_args(cfg.args)
+        net = self.model[t](**args)
+
+        return net
+
+    def get_version(self, name):
+        return self.version[name]
+
+def register(name, version='x'):
+    def wrapper(class_):
+        get_model().register(class_, name, version)
+        return class_
+    return wrapper
+
+version = '0'
+symbol = 'sd'
+
+def make_beta_schedule(schedule, n_timestep, linear_start=1e-4, linear_end=2e-2, cosine_s=8e-3):
     if schedule == "linear":
         betas = (
-            torch.linspace(linear_start ** 0.5,
-                           linear_end ** 0.5,
-                           n_timestep,
-                           dtype=torch.float64) ** 2
+                torch.linspace(linear_start ** 0.5, linear_end ** 0.5, n_timestep, dtype=torch.float64) ** 2
         )
-    
+
     elif schedule == "cosine":
         timesteps = (
-            torch.arange(
-                n_timestep + 1,
-                dtype=torch.float64) / n_timestep + cosine_s
+                torch.arange(n_timestep + 1, dtype=torch.float64) / n_timestep + cosine_s
         )
-        alphas = timesteps / (1 + cosines) * np.pi / 2
+        alphas = timesteps / (1 + cosine_s) * np.pi / 2
         alphas = torch.cos(alphas).pow(2)
-        alpha = alphas / alphas[0]
-
+        alphas = alphas / alphas[0]
         betas = 1 - alphas[1:] / alphas[:-1]
         betas = np.clip(betas, a_min=0, a_max=0.999)
-    
-    elif schedule == "sqrt_linear":
-        betas = torch.linspace(
-            linear_start,
-            linear_end,
-            n_timestep,
-            dtype=torch.float64
-        )
-    elif schedule == "sqrt":
-        betas = torch.linspace(
-            linear_start,
-            linear_end,
-            n_timestep,
-            dtype=torch.float64
-        ) ** 0.5
-    else:
-        raise ValueError(f"Schedule: {schedule} unkown")
 
-def extract_into_tensors(a, t, x_shape):
+    elif schedule == "sqrt_linear":
+        betas = torch.linspace(linear_start, linear_end, n_timestep, dtype=torch.float64)
+    elif schedule == "sqrt":
+        betas = torch.linspace(linear_start, linear_end, n_timestep, dtype=torch.float64) ** 0.5
+    else:
+        raise ValueError(f"schedule '{schedule}' unknown.")
+    return betas.numpy()
+
+def extract_into_tensor(a, t, x_shape):
     b, *_ = t.shape
     out = a.gather(-1, t)
-    return out.reshape(b, *((1,) * (len(x_shape) -1)))
+    return out.reshape(b, *((1,) * (len(x_shape) - 1)))
 
 def highlight_print(info):
     print('')
@@ -205,101 +206,93 @@ def highlight_print(info):
     print(''.join(['#']*(len(info)+4)))
     print('')
 
-
+    
 class DDPM(nn.Module):
-    def __init__(
-        self,
-        unet_config,
-        timesteps=1000,
-        use_ema=True,
-        beta_schedule="linear",
-        beta_linear_start=1e-4,
-        beta_linear_end=2e-2,
-        loss_type="l2",
+    def __init__(self,
+                 unet_config,
+                 timesteps=1000,
+                 use_ema=True,
 
-        clip_denoised=True,
-        cosine_s=8e-3,
-        given_betas=None,
-        l_simple_weight=1.,
-        original_elbo_weight=0.,
-        v_posterior=0., #weight for choosing posterior variance
-        parameterization="eps",
-        use_position_encodings=False,
-        learn_logvar=False,
-        logvar_init=0,
-    ):
+                 beta_schedule="linear",
+                 beta_linear_start=1e-4,
+                 beta_linear_end=2e-2,
+                 loss_type="l2",
+
+                 clip_denoised=True,
+                 cosine_s=8e-3,
+                 given_betas=None,
+
+                 l_simple_weight=1.,
+                 original_elbo_weight=0.,
+                 
+                 v_posterior=0., # weight for choosing posterior variance as sigma = (1-v) * beta_tilde + v * beta
+                 parameterization="eps",
+                 use_positional_encodings=False,
+                 learn_logvar=False, 
+                 logvar_init=0, ):
+
         super().__init__()
-        assert parameterization in ["eps", "x0"], 'current only supporting eps and x0'
+        assert parameterization in ["eps", "x0"], \
+            'currently only supporting "eps" and "x0"'
+        self.parameterization = parameterization
+        highlight_print("Running in {} mode".format(self.parameterization))
 
-        self.parametization = parameterization
-        highlight_print("Running in {} model".format(self.parametization))
         self.cond_stage_model = None
         self.clip_denoised = clip_denoised
-        self.use_positional_encodings = use_position_encodings
+        self.use_positional_encodings = use_positional_encodings
 
         from collections import OrderedDict
-        self.model = nn.Sequnetial(
-            OrderedDict([('diffusion_model',
-                          get_model()(unet_config))])
-        )
+        self.model = nn.Sequential(OrderedDict([('diffusion_model', get_model()(unet_config))]))
 
         self.use_ema = use_ema
         if self.use_ema:
             self.model_ema = LitEma(self.model)
-            print_log(f"Keeping EMAS of {len(list(self.model_ema.buffers()))}")
-        
+            print(f"Keeping EMAs of {len(list(self.model_ema.buffers()))}.")
+
         self.v_posterior = v_posterior
         self.l_simple_weight = l_simple_weight
-        self.original_elbo_weighht = original_elbo_weight
+        self.original_elbo_weight = original_elbo_weight
 
         self.register_schedule(
-            given_betas=given_betas,
-            beta_scheduler=beta_schedule,
+            given_betas=given_betas, 
+            beta_schedule=beta_schedule, 
             timesteps=timesteps,
-            linear_start=beta_linear_start,
-            linear_end=beta_linear_end,
-            cosine_s=cosine_s
-        )
+            linear_start=beta_linear_start, 
+            linear_end=beta_linear_end, 
+            cosine_s=cosine_s)
 
         self.loss_type = loss_type
         self.learn_logvar = learn_logvar
-        self.logvar in torch.full(
-            fill_value=logvar_init,
-            size=(self.num_timesteps,)
-        )
+        self.logvar = torch.full(
+            fill_value=logvar_init, size=(self.num_timesteps,))
         if self.learn_logvar:
-            self.logvar = nn.Parameter(self.logvar,
-            requires_grad=True)
-    
-    def register_schedule(self,
-                          given_betas=None,
-                          beta_schedule="linear",
+            self.logvar = nn.Parameter(self.logvar, requires_grad=True)
+
+    def register_schedule(self, 
+                          given_betas=None, 
+                          beta_schedule="linear", 
                           timesteps=1000,
-                          linear_start=1e-4,
-                          linear_end=2e-2,
-                          cosine_s=8e-8):
+                          linear_start=1e-4, 
+                          linear_end=2e-2, 
+                          cosine_s=8e-3):
         if given_betas is not None:
             betas = given_betas
         else:
-            betas = make_beta_schedule(beta_schedule,
-                                       timesteps,
-                                       linear_start,
-                                       linear_end=linear_end,
+            betas = make_beta_schedule(beta_schedule, timesteps, linear_start=linear_start, linear_end=linear_end,
                                        cosine_s=cosine_s)
-        
         alphas = 1. - betas
         alphas_cumprod = np.cumprod(alphas, axis=0)
-        alpha_cumprod_prev = np.append(1., alphas_cumprod[:-1])
+        alphas_cumprod_prev = np.append(1., alphas_cumprod[:-1])
 
         timesteps, = betas.shape
         self.num_timesteps = int(timesteps)
         self.linear_start = linear_start
         self.linear_end = linear_end
+        assert alphas_cumprod.shape[0] == self.num_timesteps, \
+            'alphas have to be defined for each timestep'
 
-        assert alphas_cumprod.shape[0] == self.num_timesteps, 'alphas have to be defined for each timestep'
         to_torch = partial(torch.tensor, dtype=torch.float32)
-        
-        self.register_buffer('')
+
         self.register_buffer('betas', to_torch(betas))
         self.register_buffer('alphas_cumprod', to_torch(alphas_cumprod))
         self.register_buffer('alphas_cumprod_prev', to_torch(alphas_cumprod_prev))
@@ -341,14 +334,14 @@ class DDPM(nn.Module):
             self.model_ema.store(self.model.parameters())
             self.model_ema.copy_to(self.model)
             if context is not None:
-                print_log(f"{context}: Switched to EMA weights")
+                print(f"{context}: Switched to EMA weights")
         try:
             yield None
         finally:
             if self.use_ema:
                 self.model_ema.restore(self.model.parameters())
                 if context is not None:
-                    print_log(f"{context}: Restored training weights")
+                    print(f"{context}: Restored training weights")
 
     def q_mean_variance(self, x_start, t):
         """
@@ -480,320 +473,318 @@ class DDPM(nn.Module):
         if self.use_ema:
             self.model_ema(self.model)
 
+version = '0'
+symbol = 'sd'
 
-
-
-#feedforward
-class GEGLU(nn.Module):
-    def __init__(self, dim_in, dim_out):
-        super().__init__()
-        self.proj = nn.Linear(dim_in, dim_out * 2)
-    
-    def forward(self, x):
-        x, gate = self.proj(x).chunk(2, dim=1)
-        return x * F.gelu(gate)
-    
-
-class FeedForward(nn.Module):
-    def __init__(self, dim, dim_out=None, mult=4, glu=False, dropout=0.):
-        super().__init__()
-        inner_dim = int(dim * mult)
-        dim_out = default(dim_out, dim)
-        project_in = nn.Sequential(
-            nn.linear(dim, inner_dim),
-            nn.GELU()
-        ) if not glu else GEGLU(dim, inner_dim)
-
-        self.net = nn.Sequential(
-            project_in, 
-            nn.Dropout(dropout),
-            nn.Linear(inner_dim, dim_out)
+def make_beta_schedule(schedule, n_timestep, linear_start=1e-4, linear_end=2e-2, cosine_s=8e-3):
+    if schedule == "linear":
+        betas = (
+                torch.linspace(linear_start ** 0.5, linear_end ** 0.5, n_timestep, dtype=torch.float64) ** 2
         )
 
-    def forward(self, x):
-        return self.net(x)
-    
-
-def zero_module(module):
-    #zero out the parameters of a module and return it
-    for p in module.parameters():
-        p.detach().zero_()
-    return module
-
-
-
-def normalize(in_channels):
-    return torch.nn.GroupNorm(num_groups=32, num_channels=in_channels, eps=1e-6, affine=True)
-
-
-class CheckpointFunction(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, run_function, length, *args):
-        ctx.run_function = run_function
-        ctx.input_tensors = list(args[:length])
-        ctx.input_params = list(args[length:])
-    
-        with torch.no_grad():
-            output_tensors = ctx.run_function(*ctx.input_tensors)
-        return output_tensors
-    
-    @staticmethod
-    def backward(ctx, *output_grads):
-        ctx.input_tensors = [x.detach().requires_grad_(True) for x in ctx.input_tensors]
-        with torch.enable_grad():
-            shallow_copies = [x.view_as(x) for x in ctx.input_tensors]
-            output_tensor = ctx.run_function(*shallow_copies)
-        input_grads = torch.autograd.grad(
-            output_tensor,
-            ctx.input_tnesors + ctx.input_params,
-            output_grads,
-            allow_unused=True
+    elif schedule == "cosine":
+        timesteps = (
+                torch.arange(n_timestep + 1, dtype=torch.float64) / n_timestep + cosine_s
         )
-        del ctx.input_tensors
-        del ctx.input_params
-        del output_tensor
-        return (None, None) + input_grads
+        alphas = timesteps / (1 + cosine_s) * np.pi / 2
+        alphas = torch.cos(alphas).pow(2)
+        alphas = alphas / alphas[0]
+        betas = 1 - alphas[1:] / alphas[:-1]
+        betas = np.clip(betas, a_min=0, a_max=0.999)
 
-def checkpoint(
-        func,
-        inputs,
-        params,
-        flag
-        ):
-    if flag:
-        args = tuple(inputs) + tuple(params)
-        return CheckpointFunction.apply(func, len(inputs), *args)
+    elif schedule == "sqrt_linear":
+        betas = torch.linspace(linear_start, linear_end, n_timestep, dtype=torch.float64)
+    elif schedule == "sqrt":
+        betas = torch.linspace(linear_start, linear_end, n_timestep, dtype=torch.float64) ** 0.5
     else:
-        return func(*inputs)
+        raise ValueError(f"schedule '{schedule}' unknown.")
+    return betas.numpy()
 
+def extract_into_tensor(a, t, x_shape):
+    b, *_ = t.shape
+    out = a.gather(-1, t)
+    return out.reshape(b, *((1,) * (len(x_shape) - 1)))
 
-class LinearAttention(nn.Module):
-    def __init__(self, dim, heads=4, dim_head=32):
-        super().__init__()
-        self.heads = heads
-        hidden_dim = dim_head * heads
-        self.to_qkv = nn.Conv2d(dim, hidden_dim * 3, 1, bias=False)
-        self.to_out = nn.Conv2d(hidden_dim, dim, 1)
+def highlight_print(info):
+    print('')
+    print(''.join(['#']*(len(info)+4)))
+    print('# '+info+' #')
+    print(''.join(['#']*(len(info)+4)))
+    print('')
+
     
-    def forward(self, x):
-        b, c, h, w = x.shape
-        qkv = self.to_qkv(x)
-        q, k, v = rearrange(qkv, 'b (qkv heads c) h w -> qkv b heads c (h w)', heads=self.heads, qkv=3)
-        
-        k = k.softmax(dim=-1)
-        context = torch.einsum('bhdn,bhen->bhde', k, v)
-        out = torch.einsum('bhde,bhdn->bhen', context, q)
-        out = rearrange(out, 'b heads c (h w) -> b (heads c) h w', heads=self.heads, h=h, w=w)
-        return self.to_out(out)
-    
-
-class SpatialSelfAttention(nn.Module):
-    def __init__(self, in_channels):
-        super().__init__()
-        self.in_channels = in_channels
-        self.norm = normalize(in_channels)
-        self.q = torch.nn.Conv2d(in_channels,
-                                 in_channels,
-                                 kernel_size=1,
-                                 stride=1,
-                                 padding=0)
-        self.k = torch.nn.Conv2d(in_channels,
-                                 in_channels,
-                                 kernel_size=1,
-                                 stride=1,
-                                 padding=0)
-        self.v = torch.nn.Conv2d(in_channels,
-                                    in_channels,
-                                    kernel_size=1,
-                                    stride=1,
-                                    padding=0)
-        
-        self.proj_out =  torch.nn.Conv2d(in_channels,
-                                         in_channels,
-                                         kernel_size=1,
-                                         stride=1,
-                                         padding=0)
-    
-    def forward(self, x):
-        h_ = x
-        h_ = self.norm(h_)
-
-        q = self.q(h_)
-        k = self.k(h_)
-        v = self.v(h_)
-
-        #attention
-        b,c,h,w = q.shape
-        q = rearrange(q, 'b c h w -> b (h w) c')
-        k = rearrange(q, 'b c h w -> b c (h w)')
-        w_ = torch.einsum('bij, bjk->bik', q, k)
-
-        w_ = w_ * (int(c) ** (-0.5))
-        w_ = torch.nn.functional.softmax(w_, dim=2)
-
-        #attend values
-        v = rearrange(v, 'b c h w -> b c (h w)')
-        w_ = rearrange(w_, 'b i j -> b j i ')
-        h_ = torch.einsum('bij, bjk -> bik', v, w_)
-
-        h_ = rearrange(h_, 'b c (h w) -> b c h w', h=h)
-        h_ = self.proj_out(h_)
-
-        return x+h_
-
-
-
-class CrossAttention(nn.Module):
+class DDPM(nn.Module):
     def __init__(self,
-                 query_dim,
-                 context_dim=None,
-                 heads=8,
-                 dim_head=64,
-                 dropout=0.0):
+                 unet_config,
+                 timesteps=1000,
+                 use_ema=True,
+
+                 beta_schedule="linear",
+                 beta_linear_start=1e-4,
+                 beta_linear_end=2e-2,
+                 loss_type="l2",
+
+                 clip_denoised=True,
+                 cosine_s=8e-3,
+                 given_betas=None,
+
+                 l_simple_weight=1.,
+                 original_elbo_weight=0.,
+                 
+                 v_posterior=0., # weight for choosing posterior variance as sigma = (1-v) * beta_tilde + v * beta
+                 parameterization="eps",
+                 use_positional_encodings=False,
+                 learn_logvar=False, 
+                 logvar_init=0, ):
+
         super().__init__()
-        inner_dim = dim_head * heads
-        context_dim = default(context_dim, query_dim)
+        assert parameterization in ["eps", "x0"], \
+            'currently only supporting "eps" and "x0"'
+        self.parameterization = parameterization
+        highlight_print("Running in {} mode".format(self.parameterization))
 
-        self.scale = dim_head ** -0.5
-        self.heads = heads
+        self.cond_stage_model = None
+        self.clip_denoised = clip_denoised
+        self.use_positional_encodings = use_positional_encodings
 
-        self.to_q = nn.Linear(query_dim, inner_dim, bias=False)
-        self.to_k = nn.Linear(context_dim, inner_dim, bias=False)
-        self.to_v = nn.Linear(context_dim, inner_dim, bias=False)
+        from collections import OrderedDict
+        self.model = nn.Sequential(OrderedDict([('diffusion_model', get_model()(unet_config))]))
 
-        self.to_out = nn.Sequential(
-            nn.Linear(inner_dim, query_dim),
-            nn.Dropout(dropout)
+        self.use_ema = use_ema
+        if self.use_ema:
+            self.model_ema = LitEma(self.model)
+            print(f"Keeping EMAs of {len(list(self.model_ema.buffers()))}.")
+
+        self.v_posterior = v_posterior
+        self.l_simple_weight = l_simple_weight
+        self.original_elbo_weight = original_elbo_weight
+
+        self.register_schedule(
+            given_betas=given_betas, 
+            beta_schedule=beta_schedule, 
+            timesteps=timesteps,
+            linear_start=beta_linear_start, 
+            linear_end=beta_linear_end, 
+            cosine_s=cosine_s)
+
+        self.loss_type = loss_type
+        self.learn_logvar = learn_logvar
+        self.logvar = torch.full(
+            fill_value=logvar_init, size=(self.num_timesteps,))
+        if self.learn_logvar:
+            self.logvar = nn.Parameter(self.logvar, requires_grad=True)
+
+    def register_schedule(self, 
+                          given_betas=None, 
+                          beta_schedule="linear", 
+                          timesteps=1000,
+                          linear_start=1e-4, 
+                          linear_end=2e-2, 
+                          cosine_s=8e-3):
+        if given_betas is not None:
+            betas = given_betas
+        else:
+            betas = make_beta_schedule(beta_schedule, timesteps, linear_start=linear_start, linear_end=linear_end,
+                                       cosine_s=cosine_s)
+        alphas = 1. - betas
+        alphas_cumprod = np.cumprod(alphas, axis=0)
+        alphas_cumprod_prev = np.append(1., alphas_cumprod[:-1])
+
+        timesteps, = betas.shape
+        self.num_timesteps = int(timesteps)
+        self.linear_start = linear_start
+        self.linear_end = linear_end
+        assert alphas_cumprod.shape[0] == self.num_timesteps, \
+            'alphas have to be defined for each timestep'
+
+        to_torch = partial(torch.tensor, dtype=torch.float32)
+
+        self.register_buffer('betas', to_torch(betas))
+        self.register_buffer('alphas_cumprod', to_torch(alphas_cumprod))
+        self.register_buffer('alphas_cumprod_prev', to_torch(alphas_cumprod_prev))
+
+        # calculations for diffusion q(x_t | x_{t-1}) and others
+        self.register_buffer('sqrt_alphas_cumprod', to_torch(np.sqrt(alphas_cumprod)))
+        self.register_buffer('sqrt_one_minus_alphas_cumprod', to_torch(np.sqrt(1. - alphas_cumprod)))
+        self.register_buffer('log_one_minus_alphas_cumprod', to_torch(np.log(1. - alphas_cumprod)))
+        self.register_buffer('sqrt_recip_alphas_cumprod', to_torch(np.sqrt(1. / alphas_cumprod)))
+        self.register_buffer('sqrt_recipm1_alphas_cumprod', to_torch(np.sqrt(1. / alphas_cumprod - 1)))
+
+        # calculations for posterior q(x_{t-1} | x_t, x_0)
+        posterior_variance = (1 - self.v_posterior) * betas * (1. - alphas_cumprod_prev) / (
+                    1. - alphas_cumprod) + self.v_posterior * betas
+        # above: equal to 1. / (1. / (1. - alpha_cumprod_tm1) + alpha_t / beta_t)
+        self.register_buffer('posterior_variance', to_torch(posterior_variance))
+        # below: log calculation clipped because the posterior variance is 0 at the beginning of the diffusion chain
+        self.register_buffer('posterior_log_variance_clipped', to_torch(np.log(np.maximum(posterior_variance, 1e-20))))
+        self.register_buffer('posterior_mean_coef1', to_torch(
+            betas * np.sqrt(alphas_cumprod_prev) / (1. - alphas_cumprod)))
+        self.register_buffer('posterior_mean_coef2', to_torch(
+            (1. - alphas_cumprod_prev) * np.sqrt(alphas) / (1. - alphas_cumprod)))
+
+        if self.parameterization == "eps":
+            lvlb_weights = self.betas ** 2 / (
+                        2 * self.posterior_variance * to_torch(alphas) * (1 - self.alphas_cumprod))
+        elif self.parameterization == "x0":
+            lvlb_weights = 0.5 * np.sqrt(torch.Tensor(alphas_cumprod)) / (2. * 1 - torch.Tensor(alphas_cumprod))
+        else:
+            raise NotImplementedError("mu not supported")
+        # TODO how to choose this term
+        lvlb_weights[0] = lvlb_weights[1]
+        self.register_buffer('lvlb_weights', lvlb_weights, persistent=False)
+        assert not torch.isnan(self.lvlb_weights).all()
+
+    @contextmanager
+    def ema_scope(self, context=None):
+        if self.use_ema:
+            self.model_ema.store(self.model.parameters())
+            self.model_ema.copy_to(self.model)
+            if context is not None:
+                print(f"{context}: Switched to EMA weights")
+        try:
+            yield None
+        finally:
+            if self.use_ema:
+                self.model_ema.restore(self.model.parameters())
+                if context is not None:
+                    print(f"{context}: Restored training weights")
+
+    def q_mean_variance(self, x_start, t):
+        """
+        Get the distribution q(x_t | x_0).
+        :param x_start: the [N x C x ...] tensor of noiseless inputs.
+        :param t: the number of diffusion steps (minus 1). Here, 0 means one step.
+        :return: A tuple (mean, variance, log_variance), all of x_start's shape.
+        """
+        mean = (extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start)
+        variance = extract_into_tensor(1.0 - self.alphas_cumprod, t, x_start.shape)
+        log_variance = extract_into_tensor(self.log_one_minus_alphas_cumprod, t, x_start.shape)
+        return mean, variance, log_variance
+
+    def predict_start_from_noise(self, x_t, t, noise):
+        value1 = extract_into_tensor(
+            self.sqrt_recip_alphas_cumprod, t, x_t.shape)
+        value2 = extract_into_tensor(
+            self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
+        return value1*x_t -value2*noise
+
+    def q_posterior(self, x_start, x_t, t):
+        posterior_mean = (
+                extract_into_tensor(self.posterior_mean_coef1, t, x_t.shape) * x_start +
+                extract_into_tensor(self.posterior_mean_coef2, t, x_t.shape) * x_t
         )
+        posterior_variance = extract_into_tensor(self.posterior_variance, t, x_t.shape)
+        posterior_log_variance_clipped = extract_into_tensor(self.posterior_log_variance_clipped, t, x_t.shape)
+        return posterior_mean, posterior_variance, posterior_log_variance_clipped
+
+    def p_mean_variance(self, x, t, clip_denoised: bool):
+        model_out = self.model(x, t)
+        if self.parameterization == "eps":
+            x_recon = self.predict_start_from_noise(x, t=t, noise=model_out)
+        elif self.parameterization == "x0":
+            x_recon = model_out
+        if clip_denoised:
+            x_recon.clamp_(-1., 1.)
+
+        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_recon, x_t=x, t=t)
+        return model_mean, posterior_variance, posterior_log_variance
+
+    @torch.no_grad()
+    def p_sample(self, x, t, clip_denoised=True, repeat_noise=False):
+        b, *_, device = *x.shape, x.device
+        model_mean, _, model_log_variance = self.p_mean_variance(x=x, t=t, clip_denoised=clip_denoised)
+        noise = noise_like(x.shape, device, repeat_noise)
+        # no noise when t == 0
+        nonzero_mask = (1 - (t == 0).float()).reshape(b, *((1,) * (len(x.shape) - 1)))
+        return model_mean + nonzero_mask * (0.5 * model_log_variance).exp() * noise
+
+    @torch.no_grad()
+    def p_sample_loop(self, shape, return_intermediates=False):
+        device = self.betas.device
+        b = shape[0]
+        img = torch.randn(shape, device=device)
+        intermediates = [img]
+        for i in tqdm(reversed(range(0, self.num_timesteps)), desc='Sampling t', total=self.num_timesteps):
+            img = self.p_sample(img, torch.full((b,), i, device=device, dtype=torch.long),
+                                clip_denoised=self.clip_denoised)
+            if i % self.log_every_t == 0 or i == self.num_timesteps - 1:
+                intermediates.append(img)
+        if return_intermediates:
+            return img, intermediates
+        return img
+
+    @torch.no_grad()
+    def sample(self, batch_size=16, return_intermediates=False):
+        image_size = self.image_size
+        channels = self.channels
+        return self.p_sample_loop((batch_size, channels, image_size, image_size),
+                                  return_intermediates=return_intermediates)
+
+    def q_sample(self, x_start, t, noise=None):
+        noise = torch.randn_like(x_start) if noise is None else noise
+        return (extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start +
+                extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise)
+
+    def get_loss(self, pred, target, mean=True):
+        if self.loss_type == 'l1':
+            loss = (target - pred).abs()
+            if mean:
+                loss = loss.mean()
+        elif self.loss_type == 'l2':
+            if mean:
+                loss = torch.nn.functional.mse_loss(target, pred)
+            else:
+                loss = torch.nn.functional.mse_loss(target, pred, reduction='none')
+        else:
+            raise NotImplementedError("unknown loss type '{loss_type}'")
+
+        return loss
+
+    def p_losses(self, x_start, t, noise=None):
+        noise = default(noise, lambda: torch.randn_like(x_start))
+        x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
+        model_out = self.model(x_noisy, t)
+
+        loss_dict = {}
+        if self.parameterization == "eps":
+            target = noise
+        elif self.parameterization == "x0":
+            target = x_start
+        else:
+            raise NotImplementedError(f"Paramterization {self.parameterization} not yet supported")
+
+        loss = self.get_loss(model_out, target, mean=False).mean(dim=[1, 2, 3])
+
+        log_prefix = 'train' if self.training else 'val'
+
+        loss_dict.update({f'{log_prefix}/loss_simple': loss.mean()})
+        loss_simple = loss.mean() * self.l_simple_weight
+
+        loss_vlb = (self.lvlb_weights[t] * loss).mean()
+        loss_dict.update({f'{log_prefix}/loss_vlb': loss_vlb})
+
+        loss = loss_simple + self.original_elbo_weight * loss_vlb
+
+        loss_dict.update({f'{log_prefix}/loss': loss})
+
+        return loss, loss_dict
+
+    def forward(self, x, *args, **kwargs):
+        # b, c, h, w, device, img_size, = *x.shape, x.device, self.image_size
+        # assert h == img_size and w == img_size, f'height and width of image must be {img_size}'
+        t = torch.randint(0, self.num_timesteps, (x.shape[0],), device=self.device).long()
+        return self.p_losses(x, t, *args, **kwargs)
+
+    def on_train_batch_end(self, *args, **kwargs):
+        if self.use_ema:
+            self.model_ema(self.model)
+
+version = '0'
+symbol = 'codi'
     
-    def forward(self,
-                x,
-                context=None,
-                mask=None):
-        h = self.heads
-
-        q = self.to_q(x)
-        context = default(context, x)
-        k = self.to_k(context)
-        v = self.to_v(context)
-
-        q, k, v = map(lambda t: rearrange(t, 'b h (h d) -> (b d) n d', h=h), (q, k, v))
-
-        sim = einsum('b i d ,b j d-> b i j', q, k) * self.scale
-
-        if exists(mask):
-            mask = rearrange(mask, 'b ... -> b (...)')
-            max_neg_value = -torch.finfo(sim.dtype).max
-            mask = repeat(mask, 'b j -> (b h) () j', h=h)
-            sim.masked_fill_(~mask, max_neg_value)
-
-        #attention
-        attn = sim.softmax(dim=-1)
-
-        out = einsum('b i j, b j d -> b i d', attn, v)
-        out = rearrange(out, '(b h) n d -> b n (h d)', h=h)
-        return self.to_out(out)
     
-class TransformerBlock(nn.Module):
-    def __init__(self,
-                 dim,
-                 n_heads, 
-                 d_head,
-                 dropout=0.,
-                 context_dim=None,
-                 gated_ff=True,
-                 checkpoint=True):
-        super().__init__()
-        self.attn1 = CrossAttention(query_dim=dim,
-                                    heads=n_heads,
-                                    dim_head=d_head,
-                                    dropout=dropout
-                                    )
-        self.feedforward = FeedForward(dim,
-                                       dropout=dropout,
-                                       glu=gated_ff)
-        self.attn2 = CrossAttention(query_dim=dim,
-                                    context_dim=context_dim,
-                                    heads=n_heads,
-                                    dim_head=d_head,
-                                    dropout=dropout)
-        
-        self.norm1 = nn.LayerNorm(dim)
-        self.norm2 = nn.LayerNorm(dim)
-        self.norm3= nn.LayerNorm(dim)
-        self.checkpoint = checkpoint
-
-    def forward(self, x, context=None):
-        return checkpoint(self._forward, (x, context), self.parameters(), self.checkpoint)
-    
-    def _forward(self, x, context=None):
-        x = self.attn1(self.norm(x)) + x
-        x = self.attn2(self.norm2(x), context=context) + x
-        x = self.ff(self.norm3(x)) + x
-        return x
-    
-
-class SpatialTransformer(nn.Module):
-    """
-    Transformer block for image data
-    first => project input => reshape b, t , d => standard transformer => reshape to image
-    """
-    def __init__(self,
-                 in_channels,
-                 n_head,
-                 d_head,
-                 depth=1,
-                 dropout=0.,
-                 context_dim=None):
-        super().__init__()
-        self.in_channels = in_channels
-        inner_dim = n_head * d_head
-        self.norm = normalize(in_channels)
-
-        self.proj_in = nn.Conv2d(in_channels,
-                                 inner_dim,
-                                 kernel_size=1,
-                                 stride=1,
-                                 padding=0)
-        self.transformer_blocks = nn.ModuleList(
-            TransformerBlock(inner_dim, 
-                             n_head, 
-                             d_head, 
-                             dropout=dropout, 
-                             context_dim=context_dim,
-                            )
-        )
-
-        self.proj_out = zero_module(
-            nn.Conv2d(
-                inner_dim,
-                in_channels,
-                kernel_size=1,
-                stride=1,
-                padding=0
-            )
-        )
-
-    def forward(self, 
-                x,
-                context=None):
-        b, c, h, w = x.shape
-        x_in = x
-        x = self.norm(x)
-
-        x = self.proj_in(x)
-        x = rearrange(x, 'b c h w -> b (h w) c')
-        for block in self.transformer_blocks:
-            x = block(x, context=context)
-        
-        x = rearrange(x, 'b (h w) c -> b c h w', h=h, w=w)
-        x = self.proj_out(x)
-        return x + x_in
-
-
-
-
-class Celestial(nn.Module):
+@register('codi', version)
+class CoDi(DDPM):
     def __init__(self,
                  audioldm_cfg,
                  autokl_cfg,
@@ -956,7 +947,6 @@ class Celestial(nn.Module):
             if return_algined_latents:
                 return model_output
             
-            loss_dict = {}
 
             if self.parameterization == "x0":
                 target = x_start
@@ -983,7 +973,6 @@ class Celestial(nn.Module):
             x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
             model_output = self.apply_model(x_noisy, t, cond, xtype, ctype)
 
-            loss_dict = {}
 
             if self.parameterization == "x0":
                 target = x_start
