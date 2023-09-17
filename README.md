@@ -22,31 +22,13 @@ CELESTIAL-1 can operate in vision, audio, audio-language, and vision-language ta
 This model will change everything for our species, we'll able to automate any digital task. And, we need your help. [Contribute to the project board here:](https://github.com/users/kyegomez/projects/6/views/2)
 
 
-# Usage
+# Install
 
 `pip install cstx`
 
-### Steps
+# Usage
 
-1. **Clone the Repository**:
-   ```bash
-   git clone https://github.com/kyegomez/Celestial-1.git
-   ```
 
-2. **Navigate to the Directory**:
-   ```bash
-   cd Celestial-1
-   ```
-
-3. **Install Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Train or Inference**:
-    ```python3 train.py / inference.py```
-
----
 
 ## Features
 
@@ -121,36 +103,37 @@ For more information about the ONE-PEACE architecture that CELESTIAL-1 is based 
 * ONE-PEACE Demo: [Link](#)
 * ONE-PEACE Checkpoints: [Link](#)
 
-You may refer to related work that serves as foundations for our framework and code repository, Vicuna, ImageBind, Stable Diffusion, AudioLDM, and Zeroscope. We also partially draw inspirations from PandaGPT, VPGTrans, GILL, CoDi, Video-LLaMA, and MiniGPT-4. Thanks for their wonderful works.
+[Vicuna](https://github.com/lm-sys/FastChat), 
+
+[ImageBind](https://github.com/facebookresearch/ImageBind), 
+
+[Stable Diffusion](https://huggingface.co/docs/diffusers/api/pipelines/stable_diffusion/text2img), 
+
+[AudioLDM](https://github.com/haoheliu/AudioLDM)
+[Zeroscope](https://huggingface.co/cerspense/zeroscope_v2_576w).
+
+
+[PandaGPT](https://github.com/yxuansu/PandaGPT), 
+
+[VPGTrans](https://vpgtrans.github.io/), 
+
+[GILL](https://github.com/kohjingyu/gill/), 
+
+[CoDi](https://codi-gen.github.io/),
+
+[Video-LLaMA](https://github.com/DAMO-NLP-SG/Video-LLaMA),
+
+and [MiniGPT-4](https://github.com/Vision-CAIR/MiniGPT-4)
+
+
+
+
 
 -------
 
 ## License
 
 CELESTIAL-1 is released under the Apache 2.0 license. For more information about what this license entails, please refer to the LICENSE file.
-
-
-
-
-
-
-
-## Acknowledgements
-You may refer to related work that serves as foundations for our framework and code repository, 
-[Vicuna](https://github.com/lm-sys/FastChat), 
-[ImageBind](https://github.com/facebookresearch/ImageBind), 
-[Stable Diffusion](https://huggingface.co/docs/diffusers/api/pipelines/stable_diffusion/text2img), 
-[AudioLDM](https://github.com/haoheliu/AudioLDM), and
-[Zeroscope](https://huggingface.co/cerspense/zeroscope_v2_576w).
-We also partially draw inspirations from 
-[PandaGPT](https://github.com/yxuansu/PandaGPT), 
-[VPGTrans](https://vpgtrans.github.io/), 
-[GILL](https://github.com/kohjingyu/gill/), 
-[CoDi](https://codi-gen.github.io/),
-[Video-LLaMA](https://github.com/DAMO-NLP-SG/Video-LLaMA),
-and [MiniGPT-4](https://github.com/Vision-CAIR/MiniGPT-4).
-Thanks for their wonderful works.
-
 
 
 
