@@ -1,10 +1,11 @@
-import os
-from csts.model import Celestial
-import torch
 import json
+import os
+
 import matplot.pyplot as plt
-from diffusers.utils import export_to_video
 import scipy
+import torch
+from cstx.model import Celestial
+from diffusers.utils import export_to_video
 
 
 def predict(
@@ -57,6 +58,8 @@ def predict(
         prompt_text += f'### Human: {input}'
 
     print('prompt_text: ', prompt_text)
+
+    model = Celestial()
 
     response = model.generate({
         'prompt': prompt_text,

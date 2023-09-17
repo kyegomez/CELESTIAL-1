@@ -121,8 +121,36 @@ For more information about the ONE-PEACE architecture that CELESTIAL-1 is based 
 * ONE-PEACE Demo: [Link](#)
 * ONE-PEACE Checkpoints: [Link](#)
 
+You may refer to related work that serves as foundations for our framework and code repository, Vicuna, ImageBind, Stable Diffusion, AudioLDM, and Zeroscope. We also partially draw inspirations from PandaGPT, VPGTrans, GILL, CoDi, Video-LLaMA, and MiniGPT-4. Thanks for their wonderful works.
+
 -------
 
 ## License
 
 CELESTIAL-1 is released under the Apache 2.0 license. For more information about what this license entails, please refer to the LICENSE file.
+
+
+
+
+
+
+
+## Acknowledgements
+You may refer to related work that serves as foundations for our framework and code repository, 
+[Vicuna](https://github.com/lm-sys/FastChat), 
+[ImageBind](https://github.com/facebookresearch/ImageBind), 
+[Stable Diffusion](https://huggingface.co/docs/diffusers/api/pipelines/stable_diffusion/text2img), 
+[AudioLDM](https://github.com/haoheliu/AudioLDM), and
+[Zeroscope](https://huggingface.co/cerspense/zeroscope_v2_576w).
+We also partially draw inspirations from 
+[PandaGPT](https://github.com/yxuansu/PandaGPT), 
+[VPGTrans](https://vpgtrans.github.io/), 
+[GILL](https://github.com/kohjingyu/gill/), 
+[CoDi](https://codi-gen.github.io/),
+[Video-LLaMA](https://github.com/DAMO-NLP-SG/Video-LLaMA),
+and [MiniGPT-4](https://github.com/Vision-CAIR/MiniGPT-4).
+Thanks for their wonderful works.
+
+
+
+
