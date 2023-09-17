@@ -17,8 +17,8 @@ import os
 
 from tqdm import tqdm
 
-from .base_dataset import BaseDataset
-from .utils import process_caption
+from cstx.dataset.base_dataset import BaseDataset
+from cstx.dataset.utils import process_caption
 
 
 class AudioCapDataset(BaseDataset):
@@ -43,7 +43,7 @@ class AudioCapDataset(BaseDataset):
 
         with open(data_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            
+
         for row in tqdm(data, total=len(data)):
             audio_id, one_caption = row["audio_name"], row["caption"]
             self.mm_path_list.append(os.path.join(mm_root_path, audio_id))

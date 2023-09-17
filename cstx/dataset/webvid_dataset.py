@@ -22,8 +22,8 @@ import torch
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-from .base_dataset import BaseDataset
-from .utils import process_caption
+from cstx.dataset.base_dataset import BaseDataset
+from cstx.dataset.utils import process_caption
 
 
 class WebvidDataset(BaseDataset):
