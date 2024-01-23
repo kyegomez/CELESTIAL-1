@@ -15,7 +15,7 @@ numpy==1.24.3
 packaging==23.1
 pandas==2.0.2
 peft==0.3.0
-Pillow==9.5.0
+Pillow==10.2.0
 pytorchvideo==0.1.5
 PyYAML==6.0
 PyYAML==6.0.1
